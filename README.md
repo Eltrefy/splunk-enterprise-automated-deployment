@@ -42,10 +42,14 @@ How to Set Up the Scripts
 Place all files inside your home directory (for example, /home/user).
 
 
-/home/user/
-├── install_splunk.sh         # Main setup & tuning script
-├── verification_splunk.sh    # Post-install check script
-└── splunk-<version>.tgz      # Splunk installation file
+/home/user/ ll
+
+install_splunk.sh         # Main setup & tuning script
+
+verification_splunk.sh    # Post-install check script
+
+ splunk-<version>.tgz      # Splunk installation file
+
 
 Steps to modify permissions
 
