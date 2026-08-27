@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#
+# Splunk Enterprise Installation & System Tuning Script
+#
+
+set -e
+
+# --- Colors for Terminal Output ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}====================================================${NC}"
+echo -e "${GREEN}   Starting Splunk Deployment & System Tuning Script   ${NC}"
+echo -e "${GREEN}====================================================${NC}"
+
+# 1. Root Verification
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}Error: This script must be run with root privileges (use sudo).${NC}"
+   exit 1
+fi
+
+# --- Package Location in Home Directory ---
+#---modify ="splunk-10.4.1-5a009d941268-linux-amd64.tgz" 
+#---according to your installed version
+SPLUNK_TGZ="splunk-10.0.0-e8eb0c4654f8-linux-amd64.tgz"
+
+# Resolve home directory of the non-root user who invoked sudo
+ACTUAL_USER="${SUDO_USER:-$USER}"
+USER_HOME=$(eval echo "~${ACTUAL_USER}")
+LOCAL_PACKAGE_PATH="${USER_HOME}/${SPLUNK_TGZ}"
+
+# --- Interactive Prompts ---
+echo -e "\n${YELLOW}[+] Credentials Setup:${NC}"
+
+# OS Splunk User Password
+read -rsp "Enter password for OS user 'splunk': " OS_SPLUNK_PASS
+echo
+read -rsp "Confirm password for OS user 'splunk': " OS_SPLUNK_PASS_CONFIRM
+echo
+
+if [[ "$OS_SPLUNK_PASS" != "$OS_SPLUNK_PASS_CONFIRM" ]]; then
+    echo -e "${RED}Error: OS user passwords do not match.${NC}"
+    exit 1
+fi
+
+# Splunk Admin Web/CLI Password
+read -rsp "Enter password for Splunk Web 'admin' user: " SPLUNK_ADMIN_PASS
+echo
+read -rsp "Confirm password for Splunk Web 'admin' user: " SPLUNK_ADMIN_PASS_CONFIRM
+echo
+
+if [[ "$SPLUNK_ADMIN_PASS" != "$SPLUNK_ADMIN_PASS_CONFIRM" ]]; then
+    echo -e "${RED}Error: Splunk admin passwords do not match.${NC}"
+    exit 1
+fi
+
+# Bypass Option if already installed or pre-extracted
+SKIP_EXTRACTION="n"
+if [ -d "/opt/splunk/bin" ]; then
+    read -p "Splunk installation already detected in /opt/splunk. Skip extraction phase? (y/n) [n]: " SKIP_EXTRACTION
+    SKIP_EXTRACTION=${SKIP_EXTRACTION:-n}
+fi
+
+# Firewall Configuration Prompt
+read -p "Do you want to configure firewalld rules for Splunk ports (8000, 8089, 9997)? (y/n) [y]: " CONF_FIREWALL
+CONF_FIREWALL=${CONF_FIREWALL:-y}
+
+echo -e "\n${GREEN}=== Phase 1: SELinux Configuration ===${NC}"
+if [ -f /etc/selinux/config ]; then
+    echo "[+] Configuring SELinux to permissive mode..."
+    sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
+    setenforce 0 || true
+else
+    echo "[!] /etc/selinux/config not found. Skipping runtime SELinux modification."
+fi
+
+echo -e "\n${GREEN}=== Phase 2: Dedicated OS User Setup ===${NC}"
+if ! getent group splunk >/dev/null 2>&1; then
+    echo "[+] Creating OS group 'splunk'..."
+    groupadd splunk
+fi
+
+if ! getent passwd splunk >/dev/null 2>&1; then
+    echo "[+] Creating OS user 'splunk'..."
+    useradd -m -s /bin/bash -g splunk splunk
+fi
+
+echo "[+] Setting password for Linux user 'splunk'..."
+echo "splunk:${OS_SPLUNK_PASS}" | chpasswd
+
+echo -e "\n${GREEN}=== Phase 3: Splunk Package Handling ===${NC}"
+if [[ "$SKIP_EXTRACTION" =~ ^[Nn]$ ]]; then
+    if [ -f "$LOCAL_PACKAGE_PATH" ]; then
+        echo "[+] Located package at: ${LOCAL_PACKAGE_PATH}"
+        echo "[+] Extracting Splunk package to /opt..."
+        tar -xzf "$LOCAL_PACKAGE_PATH" -C /opt
+        chown -R splunk:splunk /opt/splunk
+    else
+        echo -e "${RED}Error: Could not find '${SPLUNK_TGZ}' in ${USER_HOME}!${NC}"
+        echo "Please place '${SPLUNK_TGZ}' directly inside ${USER_HOME} and re-run the script."
+        exit 1
+    fi
+else
+    echo "[*] Bypassing Splunk extraction phase as requested."
+fi
+
+echo -e "\n${GREEN}=== Phase 4: Disable Transparent Huge Pages (THP) ===${NC}"
+echo "[+] Creating systemd service disable-thp.service..."
+cat << 'EOF' > /etc/systemd/system/disable-thp.service
+[Unit]
+Description=Disable Transparent Huge Pages (THP)
+DefaultDependencies=no
+After=sysinit.target local-fs.target
+Before=Splunkd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo never > /sys/kernel/mm/transparent_hugepage/enabled'
+ExecStart=/bin/sh -c 'echo never > /sys/kernel/mm/transparent_hugepage/defrag'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable disable-thp
+systemctl start disable-thp
+
+echo -e "\n${GREEN}=== Phase 5: Configure Splunk Admin Credentials ===${NC}"
+echo "[+] Seeding admin credentials via user-seed.conf..."
+mkdir -p /opt/splunk/etc/system/local/
+cat << EOF > /opt/splunk/etc/system/local/user-seed.conf
+[user_info]
+USERNAME = admin
+PASSWORD = ${SPLUNK_ADMIN_PASS}
+EOF
+
+chown -R splunk:splunk /opt/splunk/etc/system/local/user-seed.conf
+
+echo -e "\n${GREEN}=== Phase 6: Systemd Service & Limits Overrides ===${NC}"
+echo "[+] Creating primary Splunkd.service..."
+cat << 'EOF' > /etc/systemd/system/Splunkd.service
+[Unit]
+Description=Systemd service file for Splunk, generated by 'splunk enable boot-start'
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment="LD_LIBRARY_PATH="
+Restart=always
+ExecStart=/opt/splunk/bin/splunk _internal_launch_under_systemd --accept-license --no-prompt
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=360
+LimitRTPRIO=99
+SuccessExitStatus=51 52
+RestartPreventExitStatus=51
+RestartForceExitStatus=52
+User=splunk
+Group=splunk
+Delegate=true
+CPUWeight=100
+ExecStartPost=-/bin/bash -c "chown -R splunk:splunk /sys/fs/cgroup/system.slice/%n"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "[+] Creating systemd override directory for Splunk resource limits..."
+mkdir -p /etc/systemd/system/Splunkd.service.d/
+
+cat << 'EOF' > /etc/systemd/system/Splunkd.service.d/override.conf
+[Service]
+Environment="LD_LIBRARY_PATH="
+# Increases maximum open file handles
+LimitNOFILE=102400
+# Increases maximum simultaneous processes/threads
+LimitNPROC=65536
+# Allows unlimited data segment size
+LimitDATA=infinity
+# Enables unlimited Core Dump sizes
+LimitCORE=infinity
+# Allows locking memory into RAM
+LimitMEMLOCK=infinity
+EOF
+
+echo "[+] Reloading systemd and enabling Splunkd service..."
+systemctl daemon-reload
+systemctl enable --now Splunkd.service
+
+echo -e "\n${GREEN}=== Phase 7: Firewall Configuration (Optional) ===${NC}"
+if [[ "$CONF_FIREWALL" =~ ^[Yy]$ ]]; then
+    if systemctl is-active --quiet firewalld; then
+        echo "[+] Adding Splunk ports (8000, 8089, 9997) to firewalld..."
+        firewall-cmd --permanent --add-port=8000/tcp
+        firewall-cmd --permanent --add-port=8089/tcp
+        firewall-cmd --permanent --add-port=9997/tcp
+        firewall-cmd --reload
+        echo "[+] Currently open ports:"
+        firewall-cmd --list-ports
+    else
+        echo "[!] firewalld service is not running. Skipping firewall rules."
+    fi
+else
+    echo "[*] Skipping firewall configuration."
+fi
+
+echo -e "\n${GREEN}====================================================${NC}"
+echo -e "${GREEN}      Splunk Setup Completed Successfully!          ${NC}"
+echo -e "${GREEN}====================================================${NC}"
+systemctl status Splunkd.service --no-pager
