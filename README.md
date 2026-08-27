@@ -1,10 +1,13 @@
-splunk-enterprise-automated-deployment-for-linux-servers
+# splunk-enterprise-automated-deployment-for-linux-servers
+
 Splunk Enterprise Automated Deployment & System Tuning Scripts
 
-Executive Summary
+# Executive Summary
+
 This documentation outlines the operational procedures for deploying, hardening, and verifying Splunk Enterprise using automated Bash scripts. The suite enforces Splunk best practices, including kernel-level optimizations (THP disabling), SELinux transition management, dedicated service accounts, systemd resource limits (ulimit overrides), and network boundary rules (firewalld).
 
-Core Infrastructure Ports (Configured by Installation Script)
+# Core Infrastructure Ports (Configured by Installation Script)
+
 Port 8000 (TCP) — Web Browsers to Search Heads / All-in-One
 
 Why it is needed: Splunk Web User Interface. Provides graphical web access for users and administrators to perform searches, view dashboards, and manage the environment.
@@ -17,7 +20,8 @@ Port 9997 (TCP) — Universal Forwarders / Heavy Forwarders to Indexers
 
 Why it is needed: Splunk-to-Splunk (S2S) Ingestion. Standard data receiver port used by forwarders to stream encrypted or unencrypted log events directly into indexers.
 
-Enterprise Cluster Ports (Role-Specific Architecture Expansion)
+# Enterprise Cluster Ports (Role-Specific Architecture Expansion
+
 (You can expand them in our script)
 
 Port 9887 (TCP) — Peer Indexer to Peer Indexer (Applies to: Peer Indexers)
@@ -37,33 +41,41 @@ How to Set Up the Scripts
 
 Place all files inside your home directory (for example, /home/user).
 
-Plaintext
+
 /home/user/
 ├── install_splunk.sh         # Main setup & tuning script
 ├── verification_splunk.sh    # Post-install check script
 └── splunk-<version>.tgz      # Splunk installation file
+
 Steps to modify permissions
-Bash
+
 chmod +x install_splunk.sh verification_splunk.sh
+
 Customizing Script Parameters
+
 Before running the installation, update any variables inside install_splunk.sh if needed.
 
 Updating Target Splunk Version
+
 If you are using a different Splunk .tgz installer, update line 23 in install_splunk.sh:
 
-Bash
-# --- Modify package name according to your target version ---
+
+ --- Modify package name according to your target version ---
 SPLUNK_TGZ="splunk-10.4.1-5a009d941268-linux-amd64.tgz"
+
 (Also, you can automate addition of rule-based ports)
 
-Execution Workflow
+# Execution Workflow
+
 Run the two scripts sequentially using sudo privileges.
 
-Phase 1: Installation & System Tuning
+# Phase 1: Installation & System Tuning
+
 Execute the main installation script:
 
-Bash
+
 sudo ./install_splunk.sh
+
 Prompts during execution:
 
 Linux splunk User Password: Sets system credentials for the OS-level splunk account.
@@ -74,17 +86,22 @@ Skip Extraction Option: Enter n (default) for a fresh install; select y if re-ru
 
 Firewall Setup: Enter y (default) to open core ports (8000, 8089, 9997) via firewalld.
 
-Phase 2: Post-Deployment Audit
+# Phase 2: Post-Deployment Audit
+
 Validate system configuration state post-installation:
 
-Bash
+
 sudo ./verification_splunk.sh
+
 Verification Checklist
+
 The audit script checks the four core production prerequisites:
 
-Plaintext
-====================================================
-          AUTOMATED POST-INSTALL VERIFICATION       
+
+===================================================
+   
+          AUTOMATED POST-INSTALL VERIFICATION  
+          
 ====================================================
 
 [1/4] Verifying THP (Transparent Huge Pages) Settings:
@@ -103,6 +120,8 @@ Plaintext
 
 [4/4] Verifying Active Firewall Open Ports:
    -> Open Ports: 8000/tcp 8089/tcp 9997/tcp
+   
+
 ====================================================
 SELinux Status: Run getenforce to confirm it reports Permissive (or Disabled).
 
