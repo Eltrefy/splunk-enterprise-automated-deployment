@@ -36,7 +36,7 @@ Port 8089 (TCP) — Cluster Manager / Deployer to Cluster Peers / SHC Members (A
 
 Why it is needed: Cluster Management & Sync. Used by the Cluster Manager to monitor peer health and by the Deployer to push configuration bundles to Search Head Cluster members.
 
-How to Set Up the Scripts
+# How to Set Up the Scripts
 (User owner must have sudo privileges)
 
 Place all files inside your home directory (for example, /home/user).
